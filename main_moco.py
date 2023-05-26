@@ -30,6 +30,7 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
 
+import extra_models
 
 class RGBtoYUV709F():
 
@@ -60,6 +61,7 @@ model_names = sorted(
     for name in models.__dict__
     if name.islower() and not name.startswith("__") and callable(models.__dict__[name])
 )
+model_names.extend(['extra.mobilenet_v2', 'extra.mobilenet_v2_050'])
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
 parser.add_argument("data", metavar="DIR", help="path to dataset")
@@ -275,8 +277,18 @@ def main_worker(gpu, ngpus_per_node, args):
         )
     # create model
     print("=> creating model '{}'".format(args.arch))
+    if args.arch.startswith('extra'):
+        if args.arch == 'extra.mobilenet_v2':
+            module = extra_models.mobilenet_v2
+        elif args.arch == 'extra.mobilenet_v2_050':
+            module = extra_models.mobilenet_v2_050
+        else:
+            raise NotImplementedError(args.arch)
+    else:
+        module = models.__dict__[args.arch]
+
     model = moco.builder.MoCo(
-        models.__dict__[args.arch],
+        module,
         args.moco_dim,
         args.moco_k,
         args.moco_m,
