@@ -31,6 +31,30 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 
 
+class RGBtoYUV709F():
+
+    def __init__(self):
+        super().__init__()
+    
+    def __call__(self, img):
+        """require input in [0, 1.0]
+        """
+        assert isinstance(img, torch.Tensor)
+
+        img = img * 255.0
+        
+        R, G, B = torch.split(img, 1, dim=-3)
+        Y = 0.2126 * R + 0.7152 * G + 0.0722 * B  # [0, 255]
+        U = -0.1146 * R - 0.3854 * G + 0.5000 * B + 128  # [0, 255]
+        V = 0.5000 * R - 0.4542 * G - 0.0468 * B + 128  # [0, 255]
+        img = torch.cat([Y, U, V], dim=-3) / 255.0
+
+        return img
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}()"
+
+
 model_names = sorted(
     name
     for name in models.__dict__
@@ -175,6 +199,12 @@ parser.add_argument(
     "--aug-plus", action="store_true", help="use moco v2 data augmentation"
 )
 parser.add_argument("--cos", action="store_true", help="use cosine lr schedule")
+
+parser.add_argument(
+    "--use-yuv",
+    action="store_true",
+    help="use BT709 full range colorspace."
+)
 
 
 def main():
@@ -325,27 +355,54 @@ def main_worker(gpu, ngpus_per_node, args):
     )
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            transforms.RandomApply(
-                [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
-            ),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]
+        if args.use_yuv:
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomApply(
+                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
+                ),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                RGBtoYUV709F(),
+                # normalize,
+            ]
+        else:
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomApply(
+                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
+                ),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]
     else:
-        # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
-        augmentation = [
-            transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ]
+        if args.use_yuv:
+            # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                RGBtoYUV709F(),
+                # normalize,
+            ]
+        else:
+            # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
+            augmentation = [
+                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomGrayscale(p=0.2),
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
+                transforms.RandomHorizontalFlip(),
+                transforms.ToTensor(),
+                normalize,
+            ]
+    print(augmentation)
 
     train_dataset = datasets.ImageFolder(
         traindir, moco.loader.TwoCropsTransform(transforms.Compose(augmentation))
@@ -505,11 +562,11 @@ def accuracy(output, target, topk=(1,)):
 
         _, pred = output.topk(maxk, 1, True, True)
         pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        correct = pred.eq(target.reshape(1, -1).expand_as(pred))
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
