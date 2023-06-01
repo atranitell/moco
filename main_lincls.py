@@ -26,12 +26,37 @@ import torchvision.datasets as datasets
 import torchvision.models as models
 import torchvision.transforms as transforms
 
+import extra_models
+
+class RGBtoYUV709F():
+
+    def __init__(self):
+        super().__init__()
+    
+    def __call__(self, img):
+        """require input in [0, 1.0]
+        """
+        assert isinstance(img, torch.Tensor)
+
+        img = img * 255.0
+        
+        R, G, B = torch.split(img, 1, dim=-3)
+        Y = 0.2126 * R + 0.7152 * G + 0.0722 * B  # [0, 255]
+        U = -0.1146 * R - 0.3854 * G + 0.5000 * B + 128  # [0, 255]
+        V = 0.5000 * R - 0.4542 * G - 0.0468 * B + 128  # [0, 255]
+        img = torch.cat([Y, U, V], dim=-3) / 255.0
+
+        return img
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}()"
 
 model_names = sorted(
     name
     for name in models.__dict__
     if name.islower() and not name.startswith("__") and callable(models.__dict__[name])
 )
+model_names.extend(['extra.mobilenet_v2', 'extra.mobilenet_v2_050'])
 
 parser = argparse.ArgumentParser(description="PyTorch ImageNet Training")
 parser.add_argument("data", metavar="DIR", help="path to dataset")
@@ -154,6 +179,12 @@ parser.add_argument(
     "--pretrained", default="", type=str, help="path to moco pretrained checkpoint"
 )
 
+parser.add_argument(
+    "--use-yuv",
+    action="store_true",
+    help="use BT709 full range colorspace."
+)
+
 best_acc1 = 0
 
 
@@ -226,7 +257,16 @@ def main_worker(gpu, ngpus_per_node, args):
         )
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = models.__dict__[args.arch]()
+    if args.arch.startswith('extra'):
+        if args.arch == 'extra.mobilenet_v2':
+            model = extra_models.mobilenet_v2
+        elif args.arch == 'extra.mobilenet_v2_050':
+            model = extra_models.mobilenet_v2_050
+        else:
+            raise NotImplementedError(args.arch)
+    else:
+        model = models.__dict__[args.arch]
+    model = model()
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():
@@ -336,17 +376,38 @@ def main_worker(gpu, ngpus_per_node, args):
     normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
     )
+    if args.use_yuv:
+        trans_train = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            RGBtoYUV709F(),
+        ])
+        trans_val = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            RGBtoYUV709F(),
+        ])
+    else:
+        trans_train = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize,
+        ])
+        trans_val = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize,
+        ])
+    print(trans_train)
+    print(trans_val)
 
     train_dataset = datasets.ImageFolder(
         traindir,
-        transforms.Compose(
-            [
-                transforms.RandomResizedCrop(224),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
-        ),
+        trans_train,
     )
 
     if args.distributed:
@@ -366,14 +427,7 @@ def main_worker(gpu, ngpus_per_node, args):
     val_loader = torch.utils.data.DataLoader(
         datasets.ImageFolder(
             valdir,
-            transforms.Compose(
-                [
-                    transforms.Resize(256),
-                    transforms.CenterCrop(224),
-                    transforms.ToTensor(),
-                    normalize,
-                ]
-            ),
+            trans_val,
         ),
         batch_size=args.batch_size,
         shuffle=False,
@@ -607,11 +661,11 @@ def accuracy(output, target, topk=(1,)):
 
         _, pred = output.topk(maxk, 1, True, True)
         pred = pred.t()
-        correct = pred.eq(target.view(1, -1).expand_as(pred))
+        correct = pred.eq(target.reshape(1, -1).expand_as(pred))
 
         res = []
         for k in topk:
-            correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
+            correct_k = correct[:k].reshape(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
 
