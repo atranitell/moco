@@ -31,30 +31,7 @@ import torchvision.models as models
 import torchvision.transforms as transforms
 
 import extra_models
-
-class RGBtoYUV709F():
-
-    def __init__(self):
-        super().__init__()
-    
-    def __call__(self, img):
-        """require input in [0, 1.0]
-        """
-        assert isinstance(img, torch.Tensor)
-
-        img = img * 255.0
-        
-        R, G, B = torch.split(img, 1, dim=-3)
-        Y = 0.2126 * R + 0.7152 * G + 0.0722 * B  # [0, 255]
-        U = -0.1146 * R - 0.3854 * G + 0.5000 * B + 128  # [0, 255]
-        V = 0.5000 * R - 0.4542 * G - 0.0468 * B + 128  # [0, 255]
-        img = torch.cat([Y, U, V], dim=-3) / 255.0
-
-        return img
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}()"
-
+import extra_transforms
 
 model_names = sorted(
     name
@@ -206,6 +183,17 @@ parser.add_argument(
     "--use-yuv",
     action="store_true",
     help="use BT709 full range colorspace."
+)
+parser.add_argument(
+    "--use-autoaug",
+    action="store_true",
+    help="use auto augmentation tech."
+)
+parser.add_argument(
+    "--input-size",
+    default=224,
+    type=int,
+    help="input_size x input_size."
 )
 
 
@@ -367,47 +355,66 @@ def main_worker(gpu, ngpus_per_node, args):
     )
     if args.aug_plus:
         # MoCo v2's aug: similar to SimCLR https://arxiv.org/abs/2002.05709
-        if args.use_yuv:
-            augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-                transforms.RandomApply(
-                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
-                ),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                RGBtoYUV709F(),
-                # normalize,
-            ]
+        if args.use_autoaug:
+            if args.use_yuv:
+                augmentation = [
+                    transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.AutoAugment(),
+                    transforms.ToTensor(),
+                    extra_transforms.Cutout(n_holes=1, length=20),
+                    extra_transforms.RGBtoYUV709F(),
+                ]
+            else:
+                augmentation = [
+                    transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.AutoAugment(),
+                    transforms.ToTensor(),
+                    extra_transforms.Cutout(n_holes=1, length=20),
+                    normalize,
+                ]
         else:
-            augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
-                transforms.RandomApply(
-                    [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
-                ),
-                transforms.RandomGrayscale(p=0.2),
-                transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
-                transforms.RandomHorizontalFlip(),
-                transforms.ToTensor(),
-                normalize,
-            ]
+            if args.use_yuv:
+                augmentation = [
+                    transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
+                    transforms.RandomApply(
+                        [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
+                    ),
+                    transforms.RandomGrayscale(p=0.2),
+                    transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    extra_transforms.RGBtoYUV709F(),
+                ]
+            else:
+                augmentation = [
+                    transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
+                    transforms.RandomApply(
+                        [transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)], p=0.8  # not strengthened
+                    ),
+                    transforms.RandomGrayscale(p=0.2),
+                    transforms.RandomApply([moco.loader.GaussianBlur([0.1, 2.0])], p=0.5),
+                    transforms.RandomHorizontalFlip(),
+                    transforms.ToTensor(),
+                    normalize,
+                ]
     else:
         if args.use_yuv:
             # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
             augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
                 transforms.RandomGrayscale(p=0.2),
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
                 transforms.RandomHorizontalFlip(),
                 transforms.ToTensor(),
-                RGBtoYUV709F(),
+                extra_transforms.RGBtoYUV709F(),
                 # normalize,
             ]
         else:
             # MoCo v1's aug: the same as InstDisc https://arxiv.org/abs/1805.01978
             augmentation = [
-                transforms.RandomResizedCrop(224, scale=(0.2, 1.0)),
+                transforms.RandomResizedCrop(args.input_size, scale=(0.2, 1.0)),
                 transforms.RandomGrayscale(p=0.2),
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.4),
                 transforms.RandomHorizontalFlip(),
