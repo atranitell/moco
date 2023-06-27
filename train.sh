@@ -28,19 +28,6 @@
 
 
 # python main_moco.py \
-#   -a extra.mobilenet_v2_050 \
-#   --use-yuv \
-#   --use-autoaug \
-#   --epochs 800 \
-#   --input-size 224
-#   --schedule 480 640 \
-#   --lr 0.0125 \
-#   --batch-size 128 \
-#   --dist-url 'tcp://localhost:10001' --multiprocessing-distributed --world-size 1 --rank 0 \
-#   --mlp --moco-t 0.2 --aug-plus --cos \
-#   /data1/jk/imagenet/ILSVRC/Data/CLS-LOC/ > Exp07.moco2.mobilenet_v2_050.yuv709f.autoaug.e800.log 2>&1
-
-# python main_moco.py \
 #   -a extra.mobilenet_v2 \
 #   --use-yuv \
 #   --use-autoaug \
@@ -56,7 +43,6 @@
 python main_moco.py \
   -a extra.mobilenet_v2_050 \
   --use-yuv \
-  --use-autoaug \
   --epochs 800 \
   --input-size 384 \
   --schedule 480 640 \
