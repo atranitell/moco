@@ -1,5 +1,5 @@
 #!/bin/bash
-cd /data1/jk/imagenet/ILSVRC/Data/CLS-LOC/val/
+cd /data/jk/imagenet/ILSVRC/Data/CLS-LOC/val
 mkdir -p n01440764	
 mkdir -p n01443537	
 mkdir -p n01484850	
